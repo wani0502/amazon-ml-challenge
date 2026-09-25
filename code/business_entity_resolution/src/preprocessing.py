@@ -3,60 +3,67 @@ import re
 import unicodedata
 import pandas as pd
 
-
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
 TRAIN_DIR = ROOT_DIR / "dataset" / "train"
 TEST_DIR = ROOT_DIR / "dataset" / "test"
 
+LEGAL_SUFFIXES = {
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "co",
+    "company",
+    "ltd",
+    "limited",
+    "llc",
+    "llp",
+    "plc",
+    "pvt",
+    "private",
+    "proprietary",
+}
 
 def normalize_text(value):
-
     if pd.isna(value):
         return ""
-
     value = str(value)
-
     value = unicodedata.normalize("NFKC", value)
-
     value = value.lower()
-
     value = re.sub(r"\s+", " ", value)
-
-    value = value.strip()
-
-    return value
-
+    return value.strip()
 
 def normalize_name(value):
-
     value = normalize_text(value)
-
     value = re.sub(r"[^\w\s]", " ", value)
-
     value = re.sub(r"\s+", " ", value)
-
     return value.strip()
 
+def normalize_name_without_suffix(value):
+    value = normalize_name(value)
+
+    tokens = value.split()
+
+    while tokens and tokens[-1] in LEGAL_SUFFIXES:
+        tokens.pop()
+
+    return " ".join(tokens)
 
 def normalize_address(value):
-
     value = normalize_text(value)
-
     value = re.sub(r"[^\w\s]", " ", value)
-
     value = re.sub(r"\s+", " ", value)
-
     return value.strip()
 
+def extract_numbers(value):
+    value = normalize_text(value)
+    return " ".join(re.findall(r"\d+", value))
 
 def normalize_country(value):
-
     return normalize_text(value)
 
-
 def preprocess_dataframe(df):
-
     df = df.copy()
 
     df["business_name_clean"] = (
@@ -64,9 +71,19 @@ def preprocess_dataframe(df):
         .apply(normalize_name)
     )
 
+    df["business_name_core"] = (
+        df["business_name"]
+        .apply(normalize_name_without_suffix)
+    )
+
     df["business_address_clean"] = (
         df["business_address"]
         .apply(normalize_address)
+    )
+
+    df["address_numbers"] = (
+        df["business_address"]
+        .apply(extract_numbers)
     )
 
     df["country_clean"] = (
@@ -76,9 +93,8 @@ def preprocess_dataframe(df):
 
     return df
 
-
 def main():
-
+   
 
     print("\nLoading training data...")
 
@@ -111,6 +127,12 @@ def main():
     train_source3 = preprocess_dataframe(train_source3)
     print("✓ Source 3 complete")
 
+    print("\nGenerated preprocessing columns:")
+
+    print(
+        train_source1.columns.tolist()
+    )
+
     print("\nSample preprocessing results:")
 
     print(
@@ -118,14 +140,36 @@ def main():
             [
                 "business_name",
                 "business_name_clean",
+                "business_name_core",
                 "business_address",
                 "business_address_clean",
+                "address_numbers",
+                "country",
+                "country_clean",
             ]
-        ].head(10).to_string(index=False)
+        ]
+        .head(10)
+        .to_string(index=False)
     )
 
-    print("\nPreprocessing completed successfully.")
+    print("\nChecking missing values in generated columns:")
 
+    generated_columns = [
+        "business_name_clean",
+        "business_name_core",
+        "business_address_clean",
+        "address_numbers",
+        "country_clean",
+    ]
+
+    print(
+        train_source1[generated_columns]
+        .isna()
+        .sum()
+        .to_string()
+    )
+
+ 
 
 if __name__ == "__main__":
     main()
