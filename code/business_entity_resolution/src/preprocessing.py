@@ -79,10 +79,6 @@ def preprocess_dataframe(df):
 
 def main():
 
-    print("=" * 60)
-    print("       BUSINESS ENTITY RESOLUTION")
-    print("             PREPROCESSING")
-    print("=" * 60)
 
     print("\nLoading training data...")
 
