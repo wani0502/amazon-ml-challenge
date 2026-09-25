@@ -7,6 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 
 TRAIN_DIR = ROOT_DIR / "dataset" / "train"
 TEST_DIR = ROOT_DIR / "dataset" / "test"
+PROCESSED_DIR = ROOT_DIR / "processed"
 
 LEGAL_SUFFIXES = {
     "inc",
@@ -25,6 +26,15 @@ LEGAL_SUFFIXES = {
     "proprietary",
 }
 
+OUTPUT_COLUMNS = [
+    "entity_id",
+    "business_name_clean",
+    "business_name_core",
+    "business_address_clean",
+    "address_numbers",
+    "country_clean",
+]
+
 def normalize_text(value):
     if pd.isna(value):
         return ""
@@ -42,7 +52,6 @@ def normalize_name(value):
 
 def normalize_name_without_suffix(value):
     value = normalize_name(value)
-
     tokens = value.split()
 
     while tokens and tokens[-1] in LEGAL_SUFFIXES:
@@ -64,8 +73,6 @@ def normalize_country(value):
     return normalize_text(value)
 
 def preprocess_dataframe(df):
-    df = df.copy()
-
     df["business_name_clean"] = (
         df["business_name"]
         .apply(normalize_name)
@@ -91,85 +98,79 @@ def preprocess_dataframe(df):
         .apply(normalize_country)
     )
 
-    return df
+    return df[OUTPUT_COLUMNS]
+
+def process_source(input_path, output_path):
+    print(f"Loading {input_path.name}...")
+
+    df = pd.read_csv(
+        input_path,
+        sep="\t"
+    )
+
+    print(f"Loaded: {df.shape}")
+
+    processed_df = preprocess_dataframe(df)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    processed_df.to_csv(
+        output_path,
+        sep="\t",
+        index=False
+    )
+
+    print(f"Saved: {output_path}")
+
+    del df
+    del processed_df
 
 def main():
-   
+    train_output_dir = PROCESSED_DIR / "train"
+    test_output_dir = PROCESSED_DIR / "test"
 
-    print("\nLoading training data...")
+    train_output_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
-    train_source1 = pd.read_csv(
+    test_output_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    process_source(
         TRAIN_DIR / "train_source1.tsv",
-        sep="\t"
+        train_output_dir / "source1_processed.tsv"
     )
 
-    train_source2 = pd.read_csv(
+    process_source(
         TRAIN_DIR / "train_source2.tsv",
-        sep="\t"
+        train_output_dir / "source2_processed.tsv"
     )
 
-    train_source3 = pd.read_csv(
+    process_source(
         TRAIN_DIR / "train_source3.tsv",
-        sep="\t"
+        train_output_dir / "source3_processed.tsv"
     )
 
-    print("✓ Training data loaded")
-
-    print("\nPreprocessing Source 1...")
-    train_source1 = preprocess_dataframe(train_source1)
-    print("✓ Source 1 complete")
-
-    print("\nPreprocessing Source 2...")
-    train_source2 = preprocess_dataframe(train_source2)
-    print("✓ Source 2 complete")
-
-    print("\nPreprocessing Source 3...")
-    train_source3 = preprocess_dataframe(train_source3)
-    print("✓ Source 3 complete")
-
-    print("\nGenerated preprocessing columns:")
-
-    print(
-        train_source1.columns.tolist()
+    process_source(
+        TEST_DIR / "test_source1.tsv",
+        test_output_dir / "source1_processed.tsv"
     )
 
-    print("\nSample preprocessing results:")
-
-    print(
-        train_source1[
-            [
-                "business_name",
-                "business_name_clean",
-                "business_name_core",
-                "business_address",
-                "business_address_clean",
-                "address_numbers",
-                "country",
-                "country_clean",
-            ]
-        ]
-        .head(10)
-        .to_string(index=False)
+    process_source(
+        TEST_DIR / "test_source2.tsv",
+        test_output_dir / "source2_processed.tsv"
     )
 
-    print("\nChecking missing values in generated columns:")
-
-    generated_columns = [
-        "business_name_clean",
-        "business_name_core",
-        "business_address_clean",
-        "address_numbers",
-        "country_clean",
-    ]
-
-    print(
-        train_source1[generated_columns]
-        .isna()
-        .sum()
-        .to_string()
+    process_source(
+        TEST_DIR / "test_source3.tsv",
+        test_output_dir / "source3_processed.tsv"
     )
-
- 
 
 if __name__ == "__main__":
     main()
