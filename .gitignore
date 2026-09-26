@@ -6,3 +6,4 @@ dataset/
 .ipynb_checkpoints/
 /processed
 /eda_reports
+/output
