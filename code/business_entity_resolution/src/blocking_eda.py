@@ -2,126 +2,241 @@ import os
 import pandas as pd
 
 GROUND_TRUTH_PATH = "dataset/train/train_ground_truth.tsv"
-CANDIDATE_PATH = "output/candidate_pairs.tsv"
 SOURCE1_PATH = "processed/train/source1_processed.tsv"
-OUTPUT_PATH = "eda_reports/blocking_eda.tsv"
+SOURCE2_PATH = "processed/train/source2_processed.tsv"
+OUTPUT_PATH = "eda_reports/blocking_cumulative_recall.tsv"
 
-gt = pd.read_csv(
-    GROUND_TRUTH_PATH,
-    sep="\t",
-    dtype=str
-)
+SOURCE1_COLUMNS = [
+    "entity_id",
+    "country_clean",
+    "business_name_clean",
+    "business_name_core",
+    "business_name_token_sorted",
+    "business_address_clean",
+    "business_address_token_sorted",
+    "address_numbers"
+]
+
+SOURCE2_COLUMNS = SOURCE1_COLUMNS
+
+LEGAL_SUFFIXES = {
+    "pvt",
+    "private",
+    "limited",
+    "ltd",
+    "llp",
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "company",
+    "co"
+}
+
+CANDIDATE_COUNTS = {
+    "B1": 11521672,
+    "B2": 33183795,
+    "B3": 34927678,
+    "B4": 35482337,
+    "B5": 35716054,
+    "B6": 36053603
+}
+
+BLOCK_NAMES = [
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "B5",
+    "B6"
+]
+
+def clean(series):
+    return series.fillna("").astype(str).str.strip().str.lower()
+
+def make_name_key(value):
+    if not value:
+        return ""
+    tokens = value.split()
+    tokens = [x for x in tokens if x not in LEGAL_SUFFIXES]
+    return "_".join(tokens[:2]) if tokens else ""
+
+def prepare(df):
+    df["country_key"] = clean(df["country_clean"])
+    df["name_clean_key"] = clean(df["business_name_clean"])
+    df["name_core_key"] = clean(df["business_name_core"])
+    df["name_sorted_key"] = clean(df["business_name_token_sorted"])
+    df["address_clean_key"] = clean(df["business_address_clean"])
+    df["address_sorted_key"] = clean(df["business_address_token_sorted"])
+    df["address_numbers_key"] = clean(df["address_numbers"])
+
+    df["name_key"] = df["name_core_key"].apply(make_name_key)
+
+    df["B1"] = df["country_key"] + "||" + df["name_clean_key"]
+    df["B2"] = df["country_key"] + "||" + df["name_core_key"]
+    df["B3"] = df["country_key"] + "||" + df["name_sorted_key"]
+    df["B4"] = df["country_key"] + "||" + df["address_clean_key"]
+    df["B5"] = df["country_key"] + "||" + df["address_sorted_key"]
+
+    df["B6"] = ""
+
+    valid = (
+        df["country_key"].ne("")
+        & df["address_numbers_key"].ne("")
+        & df["name_key"].ne("")
+    )
+
+    df.loc[valid, "B6"] = (
+        df.loc[valid, "country_key"]
+        + "||"
+        + df.loc[valid, "address_numbers_key"]
+        + "||"
+        + df.loc[valid, "name_key"]
+    )
+
+    return df
 
 source1 = pd.read_csv(
     SOURCE1_PATH,
     sep="\t",
     dtype=str,
-    usecols=["entity_id"]
+    usecols=SOURCE1_COLUMNS
 )
 
-gt["matched_entity_ids"] = gt["matched_entity_ids"].fillna("")
-
-rows = []
-
-for source1_id, matched_ids in zip(
-    gt["source1_entity_id"],
-    gt["matched_entity_ids"]
-):
-    for matched_id in matched_ids.split(","):
-        matched_id = matched_id.strip()
-
-        if matched_id.startswith("S2-"):
-            rows.append((source1_id, matched_id))
-
-ground_truth = pd.DataFrame(
-    rows,
-    columns=["source1_id", "source2_id"]
-).drop_duplicates()
-
-ground_truth_keys = set(
-    zip(
-        ground_truth["source1_id"],
-        ground_truth["source2_id"]
-    )
-)
-
-candidate_counts = {}
-captured = 0
-candidate_pairs = 0
-
-for chunk in pd.read_csv(
-    CANDIDATE_PATH,
+source2 = pd.read_csv(
+    SOURCE2_PATH,
     sep="\t",
     dtype=str,
-    chunksize=1_000_000
-):
-    candidate_pairs += len(chunk)
-
-    for source1_id in chunk["source1_id"]:
-        candidate_counts[source1_id] = (
-            candidate_counts.get(source1_id, 0) + 1
-        )
-
-    keys = zip(
-        chunk["source1_id"],
-        chunk["source2_id"]
-    )
-
-    captured += sum(
-        pair in ground_truth_keys
-        for pair in keys
-    )
-
-candidate_series = pd.Series(candidate_counts)
-
-total_ground_truth = len(ground_truth)
-
-recall = (
-    captured / total_ground_truth
-    if total_ground_truth
-    else 0
+    usecols=SOURCE2_COLUMNS
 )
 
-zero_candidates = len(
-    set(source1["entity_id"]) -
-    set(candidate_counts.keys())
+source1 = prepare(source1)
+source2 = prepare(source2)
+
+source1_lookup = source1[
+    ["entity_id"] + BLOCK_NAMES
+].copy()
+
+source2_lookup = source2[
+    ["entity_id"] + BLOCK_NAMES
+].copy()
+
+source1_lookup = source1_lookup.rename(
+    columns={"entity_id": "source1_id"}
 )
 
-results = {
-    "source1_rows": len(source1),
-    "source2_rows": pd.read_csv(
-        "processed/train/source2_processed.tsv",
-        sep="\t",
-        usecols=["entity_id"]
-    ).shape[0],
-    "true_s1_s2_pairs": total_ground_truth,
-    "candidate_pairs": candidate_pairs,
-    "true_matches_captured": captured,
-    "blocking_recall": recall,
-    "avg_candidates_per_s1": candidate_series.mean(),
-    "median_candidates_per_s1": candidate_series.median(),
-    "p95_candidates_per_s1": candidate_series.quantile(0.95),
-    "p99_candidates_per_s1": candidate_series.quantile(0.99),
-    "zero_candidate_s1": zero_candidates
-}
+source2_lookup = source2_lookup.rename(
+    columns={"entity_id": "source2_id"}
+)
 
-print("\nBLOCKING EDA")
-print("-" * 50)
+captured_counts = {block: 0 for block in BLOCK_NAMES}
+cumulative_captured = {block: 0 for block in BLOCK_NAMES}
 
-for key, value in results.items():
-    if key == "blocking_recall":
-        print(f"{key}: {value:.6f} ({value * 100:.2f}%)")
-    elif "candidates_per_s1" in key:
-        print(f"{key}: {value:,.2f}")
-    else:
-        print(f"{key}: {value:,}")
+total_true_pairs = 0
+
+reader = pd.read_csv(
+    GROUND_TRUTH_PATH,
+    sep="\t",
+    dtype=str,
+    chunksize=100000
+)
+
+for gt_chunk in reader:
+    gt_chunk["matched_entity_ids"] = (
+        gt_chunk["matched_entity_ids"]
+        .fillna("")
+        .str.split(",")
+    )
+
+    gt_chunk = gt_chunk.explode("matched_entity_ids")
+
+    gt_chunk["matched_entity_ids"] = (
+        gt_chunk["matched_entity_ids"]
+        .fillna("")
+        .str.strip()
+    )
+
+    gt_chunk = gt_chunk[
+        gt_chunk["matched_entity_ids"].str.startswith("S2-")
+    ]
+
+    gt_pairs = gt_chunk[
+        ["source1_entity_id", "matched_entity_ids"]
+    ].copy()
+
+    gt_pairs.columns = ["source1_id", "source2_id"]
+
+    if gt_pairs.empty:
+        continue
+
+    gt_pairs = gt_pairs.drop_duplicates()
+
+    gt_pairs = gt_pairs.merge(
+        source1_lookup,
+        on="source1_id",
+        how="left"
+    )
+
+    gt_pairs = gt_pairs.merge(
+        source2_lookup,
+        on="source2_id",
+        how="left",
+        suffixes=("_s1", "_s2")
+    )
+
+    total_true_pairs += len(gt_pairs)
+
+    block_hits = pd.DataFrame(index=gt_pairs.index)
+
+    for block in BLOCK_NAMES:
+        block_hits[block] = (
+            gt_pairs[f"{block}_s1"].fillna("")
+            == gt_pairs[f"{block}_s2"].fillna("")
+        ) & gt_pairs[f"{block}_s1"].fillna("").ne("")
+
+        captured_counts[block] += int(block_hits[block].sum())
+
+    cumulative = pd.Series(False, index=gt_pairs.index)
+
+    for block in BLOCK_NAMES:
+        cumulative = cumulative | block_hits[block]
+        cumulative_captured[block] += int(cumulative.sum())
+
+results = []
+
+for block in BLOCK_NAMES:
+    results.append({
+        "block": block,
+        "candidate_pairs": CANDIDATE_COUNTS[block],
+        "true_pairs_captured_this_block": captured_counts[block],
+        "true_pairs_captured_cumulative": cumulative_captured[block],
+        "cumulative_recall": cumulative_captured[block] / total_true_pairs
+    })
+
+results_df = pd.DataFrame(results)
 
 os.makedirs("eda_reports", exist_ok=True)
 
-pd.DataFrame([results]).to_csv(
+results_df.to_csv(
     OUTPUT_PATH,
     sep="\t",
     index=False
 )
 
-print(f"\nSaved: {OUTPUT_PATH}")
+print()
+print("BLOCKING CUMULATIVE RECALL")
+print("=" * 70)
+print(f"Total true S1-S2 pairs: {total_true_pairs:,}")
+print()
+
+for _, row in results_df.iterrows():
+    print(
+        f"{row['block']}: "
+        f"{row['candidate_pairs']:,} candidates | "
+        f"{row['true_pairs_captured_this_block']:,} new true pairs | "
+        f"{row['true_pairs_captured_cumulative']:,} cumulative true pairs | "
+        f"{row['cumulative_recall'] * 100:.2f}% recall"
+    )
+
+print()
+print(f"Saved: {OUTPUT_PATH}")
